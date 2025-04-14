@@ -238,7 +238,7 @@ class ABGAnalyzer {
         let expectedValue, measuredValue, valueName, resultText;
         const deltaPaco2 = paco2 - 40;
         const deltaHco3 = hco3 - 24;
-        const range = 2; // Standard ± range for compensation formulas
+        let range = 2; // Default range, will be adjusted for respiratory
 
         switch (primary) {
             case 'metabolic acidosis':
@@ -256,14 +256,14 @@ class ABGAnalyzer {
                 break;
 
             case 'metabolic alkalosis':
-                const rangeMetAlk = 5; // Wider range often used
-                this.state.expectedCompensationValue = 40 + (0.7 * deltaHco3);
+                range = 5; // Wider range often used for Met Alk
+                this.state.expectedCompensationValue = 40 + (0.6 * deltaHco3); // Guideline uses 0.6 multiplier
                 measuredValue = paco2;
                 valueName = 'PaCO₂';
-                resultText = `Expected ${valueName} ≈ ${this.state.expectedCompensationValue.toFixed(1)} ± ${rangeMetAlk} mmHg. Measured ${valueName} = ${measuredValue.toFixed(1)} mmHg.`;
-                if (Math.abs(measuredValue - this.state.expectedCompensationValue) <= rangeMetAlk) {
+                resultText = `Expected ${valueName} ≈ ${this.state.expectedCompensationValue.toFixed(1)} ± ${range} mmHg. Measured ${valueName} = ${measuredValue.toFixed(1)} mmHg.`;
+                if (Math.abs(measuredValue - this.state.expectedCompensationValue) <= range) {
                     this.state.compensationAssessment = 'appropriate';
-                } else if (measuredValue < this.state.expectedCompensationValue - rangeMetAlk) { // Lower PaCO2 = more alkalosis
+                } else if (measuredValue < this.state.expectedCompensationValue - range) { // Lower PaCO2 = more alkalosis
                     this.state.compensationAssessment = 'mixed'; this.state.additionalDisorders.push('respiratory alkalosis');
                 } else { // Higher PaCO2 = more acidosis
                     this.state.compensationAssessment = 'mixed'; this.state.additionalDisorders.push('respiratory acidosis');
@@ -271,8 +271,9 @@ class ABGAnalyzer {
                 break;
 
             case 'respiratory acidosis':
+                range = 3; // Guideline uses ±3 for respiratory
                 const expectedAcuteHCO3 = 24 + (deltaPaco2 * 0.1);
-                const expectedChronicHCO3 = 24 + (deltaPaco2 * 0.35); // Some use 0.4
+                const expectedChronicHCO3 = 24 + (deltaPaco2 * 0.35); // Guideline uses 3.5 per 10 = 0.35
                 measuredValue = hco3;
                 valueName = 'HCO₃⁻';
                 // Determine if closer to acute or chronic based on measured HCO3
@@ -295,8 +296,9 @@ class ABGAnalyzer {
                 break;
 
             case 'respiratory alkalosis':
-                 const expectedAcuteHCO3_alk = 24 + (deltaPaco2 * 0.2); // deltaPaco2 is negative
-                 const expectedChronicHCO3_alk = 24 + (deltaPaco2 * 0.4); // Using 0.4 for chronic drop (some use 0.5)
+                 range = 3; // Guideline uses ±3 for respiratory
+                 const expectedAcuteHCO3_alk = 24 + (deltaPaco2 * 0.2); // Guideline: Decrease = 2 * (ΔPaCO2/10) -> 0.2 multiplier
+                 const expectedChronicHCO3_alk = 24 + (deltaPaco2 * 0.5); // Guideline: Decrease = 5-7 * (ΔPaCO2/10) -> Using 0.5 multiplier
                  measuredValue = hco3;
                  valueName = 'HCO₃⁻';
                  if (Math.abs(measuredValue - expectedAcuteHCO3_alk) < Math.abs(measuredValue - expectedChronicHCO3_alk)) {
@@ -387,15 +389,24 @@ class ABGAnalyzer {
 
     /**
      * Step 6: Evaluate Delta Ratio (ΔAG / ΔHCO₃⁻) if HAGMA is present.
-     * Delta AG = Calculated AG (Corrected if available) - 12 (Normal AG)
+     * Delta AG = Measured AG - Normal AG (Adjusted for Albumin)
      * Delta HCO3 = 24 (Normal HCO3) - Measured HCO3
      */
-    evaluateDeltaRatio(anionGap, hco3) { // Pass the AG value to use (corrected or raw)
+    evaluateDeltaRatio(anionGap, hco3, albumin) { // Pass AG, HCO3, and Albumin
         if (isNaN(anionGap) || isNaN(hco3)) {
              return "Cannot calculate Delta Ratio: Invalid AG or HCO₃⁻ value.";
         }
 
-        const deltaAG = anionGap - 12;
+        // Calculate albumin-adjusted normal AG
+        let normalAG = 12;
+        const albuminNum = parseFloat(albumin);
+        if (albumin !== undefined && !isNaN(albuminNum) && albuminNum < 4.0 && albuminNum >= 0) {
+            normalAG = 12 - (2.5 * (4.0 - albuminNum));
+            // Ensure normalAG doesn't go below a reasonable minimum, e.g., 3-4
+            normalAG = Math.max(3, normalAG);
+        }
+
+        const deltaAG = anionGap - normalAG; // Use adjusted normal AG
         const deltaHCO3 = 24 - hco3;
 
         if (deltaHCO3 === 0) {
@@ -411,18 +422,18 @@ class ABGAnalyzer {
 
 
         this.state.deltaRatio = deltaAG / deltaHCO3;
-        let resultText = `Delta Ratio (ΔAG/ΔHCO₃⁻) = ${this.state.deltaRatio.toFixed(1)}.`;
+        let resultText = `Delta Ratio (ΔAG/ΔHCO₃⁻) = ${this.state.deltaRatio.toFixed(1)}. (Normal AG adjusted to ${normalAG.toFixed(1)} if albumin provided).`;
 
-        // Interpretation ranges (can vary slightly in literature)
-        if (this.state.deltaRatio < 0.8) {
+        // Interpretation ranges based on updated guideline
+        if (this.state.deltaRatio < 1.0) {
             this.state.deltaRatioAssessment = 'concurrent NAGMA';
-            resultText += " Ratio < 0.8 suggests concurrent Normal Anion Gap Metabolic Acidosis (NAGMA).";
+            resultText += " Ratio < 1.0 suggests concurrent Normal Anion Gap Metabolic Acidosis (NAGMA).";
              if (!this.state.additionalDisorders.includes('normal anion gap metabolic acidosis')) {
                  this.state.additionalDisorders.push('normal anion gap metabolic acidosis');
              }
-        } else if (this.state.deltaRatio > 1.8) { // Some use > 2.0
+        } else if (this.state.deltaRatio > 2.0) {
             this.state.deltaRatioAssessment = 'concurrent met alk';
-            resultText += " Ratio > 1.8 suggests concurrent Metabolic Alkalosis.";
+            resultText += " Ratio > 2.0 suggests concurrent Metabolic Alkalosis.";
              if (!this.state.additionalDisorders.includes('metabolic alkalosis')) {
                  this.state.additionalDisorders.push('metabolic alkalosis');
              }
