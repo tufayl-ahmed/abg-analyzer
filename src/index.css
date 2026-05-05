@@ -1,3 +1,6 @@
+/* Add Inter font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+
 :root {
   /* Clinical Color Palette */
   --color-background: #F8F9FA; /* Light neutral grey */
@@ -91,6 +94,3 @@ a:hover {
 @media (min-width: 1400px) { /* Add a larger breakpoint */
   .container { max-width: 1500px; } /* Even wider for very large screens */
 }
-
-/* Add Inter font (example using Google Fonts) */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
